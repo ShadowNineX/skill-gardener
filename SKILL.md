@@ -1,6 +1,6 @@
 ---
 name: "skill-gardener"
-description: "Create, repair, deduplicate, and verify local skills from proven workflows."
+description: "When a workflow is proven, corrected, recurring, or worth retaining: create, repair, deduplicate, and verify a lean local skill."
 metadata:
   openclaw:
     tags: [skills, self-improvement, maintenance, learning]
@@ -110,6 +110,13 @@ Rules:
 Completion: the skill changes future behavior and contains no task-specific sediment.
 
 ### 5. Validate
+
+Before validation, apply a version-agnostic OpenClaw compatibility gate:
+
+- Discover the installed OpenClaw skill-management and audit capabilities before using them; never require a command, path, or lifecycle feature that may not exist in the current release.
+- Prefer the current runtime's managed lifecycle when available; otherwise use the documented filesystem/audit fallback.
+- Treat installed, project-local, and packaged copies as separate artifacts. Verify the environment intended to use the skill can discover the copy you changed.
+- If the runtime reports a cached catalog, verify the file and record that a fresh session may be required; do not mistake cache delay for a failed install.
 
 Run:
 
