@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from datetime import date
 import json
 import os
 import re
@@ -116,6 +117,11 @@ def parse_scalar(value: str, depth: int) -> object:
         return True
     if value in ("false", "False", "FALSE"):
         return False
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        try:
+            return date.fromisoformat(value)
+        except ValueError as exc:
+            raise FrontmatterError("invalid date scalar") from exc
     try:
         return ast.literal_eval(value)
     except (ValueError, SyntaxError):

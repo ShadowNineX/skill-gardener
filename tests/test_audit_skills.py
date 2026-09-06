@@ -117,7 +117,7 @@ class AuditTests(unittest.TestCase):
         for value in ['9999-99-99', '9' * 5000]:
             with self.subTest(value_length=len(value)):
                 self.skill(frontmatter=f'name: demo\ndescription: {value}')
-                run = self.cli(self.root)
+                run = self.cli(self.root, isolated=True)
                 self.assertEqual(run.returncode, 1)
                 self.assertFalse(json.loads(run.stdout)["passed"])
                 self.assertNotIn('Traceback', run.stderr)
