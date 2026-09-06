@@ -139,10 +139,12 @@ class AuditTests(unittest.TestCase):
         self.assertTrue(self.result()["passed"])
 
     def test_optional_fields(self):
-        for extra in ['compatibility: []', 'compatibility: ' + 'a' * 501, 'license: false', 'allowed-tools: [Read]', 'metadata: []']:
+        for extra in ['compatibility: []', 'compatibility: ' + 'a' * 501, 'license: false', 'allowed-tools: []', 'allowed-tools: [Read, false]', 'metadata: []']:
             with self.subTest(extra=extra):
                 self.skill(frontmatter=f'name: demo\ndescription: useful\n{extra}')
                 self.assertFalse(self.result()["passed"])
+        self.skill(frontmatter='name: demo\ndescription: useful\nallowed-tools:\n  - Read\n  - Exec')
+        self.assertTrue(self.result()["passed"])
 
     def test_empty_body_and_missing_delimiters(self):
         for raw in ['---\nname: demo\ndescription: useful\n---', 'name: demo\n', '\ufeff---\nname: demo\n---\n# Body', '---\nname: demo\n']:
@@ -295,12 +297,30 @@ class AuditTests(unittest.TestCase):
             with self.subTest(args=args):
                 self.assertEqual(self.cli(*args).returncode, 2)
 
-    def test_missing_yaml_dependency_fails_closed(self):
-        self.skill()
-        run = self.cli(self.root, isolated=True)
-        self.assertEqual(run.returncode, 2)
-        self.assertIn('PyYAML', run.stdout)
-        self.assertFalse(json.loads(run.stdout)["passed"])
+    def test_builtin_parser_works_without_yaml_dependency(self):
+        for fields in [
+            'name: demo\ndescription: "Useful: workflow"',
+            'name: demo\ndescription: |\n  First line\n  Second line',
+            'name: demo\ndescription: useful\nmetadata:\n  openclaw:\n    tags: [skills, learning]',
+            'name: demo\ndescription: useful\nallowed-tools:\n  - Read\n  - Exec',
+        ]:
+            with self.subTest(fields=fields):
+                self.skill(frontmatter=fields)
+                run = self.cli(self.root, isolated=True)
+                self.assertEqual(run.returncode, 0, run.stderr)
+                self.assertTrue(json.loads(run.stdout)["passed"])
+
+    def test_builtin_parser_rejects_unsafe_yaml(self):
+        for fields in [
+            'name: demo\ndescription: useful\nmetadata: &data {key: value}\nother: *data',
+            'name: demo\ndescription: useful\nmetadata:\n  key: first\n  key: second',
+            'name: demo\ndescription: useful\nmetadata: !!python/object/apply:os.system ["echo forbidden"]',
+        ]:
+            with self.subTest(fields=fields):
+                self.skill(frontmatter=fields)
+                run = self.cli(self.root, isolated=True)
+                self.assertEqual(run.returncode, 1, run.stderr)
+                self.assertFalse(json.loads(run.stdout)["passed"])
 
     def test_empty_collection_fails(self):
         self.assertFalse(self.result()["passed"])

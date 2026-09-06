@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -23,6 +24,173 @@ MAX_ENTRIES = 10000
 DEFAULT_DEPTH = 6
 MAX_DEPTH = 64
 IGNORED_DIRS = frozenset({".git", ".hg", ".svn", ".venv", "venv", "node_modules", "__pycache__"})
+
+
+class FrontmatterError(ValueError):
+    """Invalid or unsupported YAML in the audit's portable subset."""
+
+
+def strip_comment(value: str) -> str:
+    """Remove a YAML comment while preserving quoted scalar content."""
+    quote = None
+    escaped = False
+    for index, char in enumerate(value):
+        if quote == '"' and char == "\\" and not escaped:
+            escaped = True
+            continue
+        if char in "\"'" and not escaped:
+            quote = None if quote == char else (char if quote is None else quote)
+        elif char == "#" and quote is None and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+        escaped = False
+    if quote is not None:
+        raise FrontmatterError("unterminated quoted scalar")
+    return value.rstrip()
+
+
+def split_flow(value: str, delimiter: str = ",") -> list[str]:
+    """Split a flow collection without interpreting quotes or nested brackets."""
+    parts, start, depth, quote, escaped = [], 0, 0, None, False
+    for index, char in enumerate(value):
+        if quote == '"' and char == "\\" and not escaped:
+            escaped = True
+            continue
+        if char in "\"'" and not escaped:
+            quote = None if quote == char else (char if quote is None else quote)
+        elif quote is None:
+            if char in "[{":
+                depth += 1
+            elif char in "]}":
+                depth -= 1
+                if depth < 0:
+                    raise FrontmatterError("unbalanced flow collection")
+            elif char == delimiter and depth == 0:
+                parts.append(value[start:index].strip())
+                start = index + 1
+        escaped = False
+    if quote is not None or depth != 0:
+        raise FrontmatterError("unterminated flow collection")
+    parts.append(value[start:].strip())
+    return parts
+
+
+def parse_scalar(value: str, depth: int) -> object:
+    value = strip_comment(value).strip()
+    if depth > MAX_YAML_DEPTH:
+        raise FrontmatterError("YAML nesting limit exceeded")
+    if not value:
+        return None
+    if value.startswith(("&", "*", "!")) or value.startswith("<<:"):
+        raise FrontmatterError("YAML aliases, merge keys, and tags are not supported")
+    if value[0] == "'":
+        if len(value) < 2 or value[-1] != "'":
+            raise FrontmatterError("unterminated quoted scalar")
+        return value[1:-1].replace("''", "'")
+    if value[0] == '"':
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise FrontmatterError("invalid double-quoted scalar") from exc
+    if value.startswith("["):
+        if not value.endswith("]"):
+            raise FrontmatterError("unterminated flow sequence")
+        inner = value[1:-1].strip()
+        return [] if not inner else [parse_scalar(part, depth + 1) for part in split_flow(inner)]
+    if value.startswith("{"):
+        if not value.endswith("}"):
+            raise FrontmatterError("unterminated flow mapping")
+        result = {}
+        inner = value[1:-1].strip()
+        for item in ([] if not inner else split_flow(inner)):
+            key_value = split_flow(item, ":")
+            if len(key_value) != 2:
+                raise FrontmatterError("invalid flow mapping")
+            key = parse_scalar(key_value[0], depth + 1)
+            if not isinstance(key, str) or key == "<<" or key in result:
+                raise FrontmatterError("mapping keys must be unique strings")
+            result[key] = parse_scalar(key_value[1], depth + 1)
+        return result
+    if value in ("null", "Null", "NULL", "~"):
+        return None
+    if value in ("true", "True", "TRUE"):
+        return True
+    if value in ("false", "False", "FALSE"):
+        return False
+    try:
+        return ast.literal_eval(value)
+    except (ValueError, SyntaxError):
+        return value
+
+
+def fallback_load(source: str) -> dict:
+    """Parse the safe, documented YAML subset without third-party packages."""
+    lines = source.splitlines()
+
+    def block(index: int, indent: int, depth: int) -> tuple[object, int]:
+        if depth > MAX_YAML_DEPTH:
+            raise FrontmatterError("YAML nesting limit exceeded")
+        result: object | None = None
+        while index < len(lines):
+            raw = lines[index]
+            if not raw.strip() or raw.lstrip().startswith("#"):
+                index += 1
+                continue
+            current = len(raw) - len(raw.lstrip(" "))
+            if "\t" in raw[: len(raw) - len(raw.lstrip())] or current < indent:
+                break
+            if current != indent:
+                raise FrontmatterError("invalid indentation")
+            text = strip_comment(raw.strip())
+            if text.startswith("- ") or text == "-":
+                if result is None:
+                    result = []
+                if not isinstance(result, list):
+                    raise FrontmatterError("mixed mapping and sequence")
+                item = text[1:].strip()
+                if item:
+                    result.append(parse_scalar(item, depth + 1))
+                    index += 1
+                else:
+                    index += 1
+                    child, index = block(index, indent + 2, depth + 1)
+                    result.append(child)
+                continue
+            if ":" not in text:
+                raise FrontmatterError("invalid mapping entry")
+            key_text, value = text.split(":", 1)
+            key = parse_scalar(key_text, depth + 1)
+            if not isinstance(key, str) or key == "<<":
+                raise FrontmatterError("mapping keys must be strings; YAML merge keys are unsupported")
+            if result is None:
+                result = {}
+            if not isinstance(result, dict):
+                raise FrontmatterError("mixed mapping and sequence")
+            if key in result:
+                raise FrontmatterError("duplicate mapping key")
+            value = value.strip()
+            if value in ("|", "|-", "|+", ">", ">-", ">+"):
+                folded, index = [], index + 1
+                while index < len(lines) and (not lines[index].strip() or len(lines[index]) - len(lines[index].lstrip(" ")) > indent):
+                    content = lines[index]
+                    folded.append(content[indent + 2:] if len(content) > indent + 1 else "")
+                    index += 1
+                text_value = (" " if value.startswith(">") else "\n").join(folded).rstrip("\n")
+                result[key] = text_value if value.endswith("-") else text_value + "\n"
+            elif value:
+                result[key] = parse_scalar(value, depth + 1)
+                index += 1
+            else:
+                index += 1
+                child, index = block(index, indent + 2, depth + 1)
+                result[key] = child
+        if result is None:
+            raise FrontmatterError("empty frontmatter")
+        return result, index
+
+    parsed, index = block(0, 0, 0)
+    if index != len(lines) or not isinstance(parsed, dict):
+        raise FrontmatterError("frontmatter must be a mapping")
+    return parsed
 
 
 if yaml is not None:
@@ -82,8 +250,6 @@ def read_skill(path: Path) -> str:
 
 
 def parse_frontmatter(path: Path) -> tuple[dict, str | None]:
-    if yaml is None:
-        return {}, "PyYAML is required; install the skill's requirements.txt in a virtual environment"
     try:
         text = read_skill(path)
     except (OSError, UnicodeError, ValueError) as exc:
@@ -101,8 +267,9 @@ def parse_frontmatter(path: Path) -> tuple[dict, str | None]:
     if not "\n".join(lines[end + 1:]).strip():
         return {}, "skill body is empty"
     try:
-        fields = yaml.load("\n".join(lines[1:end]) + "\n", Loader=FrontmatterLoader)
-    except (yaml.YAMLError, ValueError, OverflowError, RecursionError) as exc:
+        source = "\n".join(lines[1:end]) + "\n"
+        fields = yaml.load(source, Loader=FrontmatterLoader) if yaml is not None else fallback_load(source)
+    except ((yaml.YAMLError if yaml is not None else FrontmatterError), ValueError, OverflowError, RecursionError) as exc:
         mark = getattr(exc, "problem_mark", None)
         location = f" near line {mark.line + 2}, column {mark.column + 1}" if mark else ""
         return {}, "invalid or unsupported YAML frontmatter" + location
@@ -205,9 +372,17 @@ def audit(root: Path, *, single: bool = False, max_depth: int = DEFAULT_DEPTH) -
             issue(path, "description must be a non-empty string")
         elif len(description) > 1024:
             issue(path, "description exceeds 1024 characters")
-        for field in ("compatibility", "license", "allowed-tools"):
+        for field in ("compatibility", "license"):
             if field in fields and (not isinstance(fields[field], str) or not fields[field].strip()):
                 issue(path, f"{field} must be a non-empty string when provided")
+        if "allowed-tools" in fields:
+            tools = fields["allowed-tools"]
+            if isinstance(tools, str):
+                valid_tools = bool(tools.strip())
+            else:
+                valid_tools = isinstance(tools, list) and bool(tools) and all(isinstance(tool, str) and tool.strip() for tool in tools)
+            if not valid_tools:
+                issue(path, "allowed-tools must be a non-empty string or list of non-empty strings when provided")
         if isinstance(fields.get("compatibility"), str) and len(fields["compatibility"]) > 500:
             issue(path, "compatibility exceeds 500 characters")
         # OpenClaw accepts nested metadata; it is not limited to flat strings.
@@ -229,9 +404,6 @@ def main() -> int:
         parser.error("use a collection root or --skill, not both")
     if not 1 <= args.max_depth <= MAX_DEPTH:
         parser.error("--max-depth must be between 1 and 64")
-    if yaml is None:
-        print(json.dumps({"passed": False, "issues": [{"issue": "PyYAML is required; install requirements.txt in a virtual environment"}]}))
-        return 2
     root = args.skill if args.skill is not None else (args.root or Path("skills"))
     result = audit(root, single=args.skill is not None, max_depth=args.max_depth)
     print(json.dumps(result, indent=2))

@@ -16,15 +16,13 @@ The repository root is the skill package. Confirm the runtime discovers its `SKI
 
 ## Prepare the audit
 
-Requires Python 3.10+ and the pinned PyYAML dependency. From this repository directory:
+Requires Python 3.10+. The audit uses PyYAML when it is already available and otherwise uses its built-in bounded parser, so a fresh Python installation can run it directly:
 
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python scripts/audit_skills.py --skill .
+python3 scripts/audit_skills.py --skill .
 ```
 
-On Windows, use `.venv\Scripts\python.exe` instead of `.venv/bin/python`. An existing trusted Python environment with the same dependency is also suitable. The helper never installs packages, accesses the network, executes candidate code, or changes audited files.
+The helper never installs packages, accesses the network, executes candidate code, or changes audited files.
 
 Once installed elsewhere, resolve the helper from the loaded skill's directory, not the current working directory. `{baseDir}` in the OpenClaw skill instructions is supplied by OpenClaw; it is not a literal shell environment variable.
 
@@ -45,29 +43,29 @@ Neither is required or installed automatically. See [integration guidance and re
 
 ```bash
 # One skill, without reading siblings
-.venv/bin/python scripts/audit_skills.py --skill /path/to/skill
+python3 scripts/audit_skills.py --skill /path/to/skill
 
 # One actual collection root, including grouped skill directories
-.venv/bin/python scripts/audit_skills.py /path/to/workspace/skills
+python3 scripts/audit_skills.py /path/to/workspace/skills
 ```
 
-The JSON report includes scope, discovered skill count, pass/fail, issues, and warnings. Exit codes: `0` passes structural checks, `1` validation/discovery fails, `2` invalid invocation/root or missing dependency.
+The JSON report includes scope, discovered skill count, pass/fail, issues, and warnings. Exit codes: `0` passes structural checks, `1` validation/discovery fails, `2` invalid invocation or root.
 
 Checks cover valid YAML, a nonempty body, name syntax and the 64-character limit, nonempty string descriptions and their decoded 1024-character limit, supported optional-field types, and duplicate names within the selected root. Directory/name mismatches are warnings because OpenClaw supports layouts that differ from the portable Agent Skills naming convention; newly authored skills should match.
 
 Collection discovery stops below each directory containing `SKILL.md`, including invalid files. It searches up to six directory levels by default (`--max-depth` accepts 1–64), visits at most 10,000 entries, and skips `.git`, `.hg`, `.svn`, `.venv`, `venv`, `node_modules`, and `__pycache__`. Encountering a symlink, unreadable directory, or discovery limit makes the result fail rather than silently declaring full coverage. Root paths must also have no symlink components; use the actual physical path on systems with aliased temporary directories. File symlinks and special files are rejected; each `SKILL.md` is capped at 1 MiB. Run against a stable tree: this helper is not a sandbox against concurrent adversarial filesystem changes.
 
-The YAML parser accepts quoted values, comments, multiline scalars, and nested OpenClaw metadata. It rejects duplicate keys, aliases, merge keys, unsafe YAML tags, and nesting beyond 32 levels. These are deliberate audit restrictions, not claims that every runtime rejects those constructs.
+The parser accepts quoted values, comments, multiline scalars, simple flow collections, and nested OpenClaw metadata. It rejects duplicate keys, aliases, merge keys, unsafe YAML tags, and nesting beyond 32 levels. These are deliberate audit restrictions, not claims that every runtime rejects those constructs. The built-in fallback intentionally supports this audit subset rather than all YAML syntax.
 
 The audit does **not** establish that instructions are safe, triggers are useful, scripts work, references exist, all runtime metadata is valid, or the host can load a skill. The procedural review, relevant tests, and runtime discovery check remain necessary. It does not merge separate roots or account for runtime precedence; audit roots separately and inspect the effective catalog.
 
 ## Development checks
 
-From the repository root using the prepared interpreter:
+From the repository root:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python scripts/audit_skills.py --skill .
+python3 -m unittest discover -s tests -v
+python3 scripts/audit_skills.py --skill .
 ```
 
 Tests use temporary fixtures and cover malformed and valid YAML, limits, grouped discovery, links/special files, duplicate skills, read-only behavior, and CLI exit codes. GitHub Actions runs these checks on supported Python versions.

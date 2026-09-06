@@ -1,9 +1,11 @@
 ---
 name: skill-gardener
 description: "Create or repair local skills from verified, reusable workflows. Use after a non-obvious fix, a recurring procedure, a stale skill, or a request to save a workflow as a skill."
-metadata:
-  openclaw:
-    tags: [skills, self-improvement, maintenance, learning]
+allowed-tools:
+  - Read
+  - Write
+  - Edit
+  - Exec
 ---
 
 # Skill Gardener
@@ -23,7 +25,7 @@ Preserve proven procedures in compact skills that a future agent can use without
 
 Resolve the active workspace, the intended skill root, and this skill's own directory from the runtime/catalog before editing. In OpenClaw, `{baseDir}` refers to this installed skill's directory. Do not assume the current working directory or an installation under `skills/skill-gardener`.
 
-For the bundled audit, use Python 3.10+ with the pinned dependency in `requirements.txt`. If it is missing, use an existing trusted environment or prepare the documented virtual environment when installation is authorized. Otherwise report validation as blocked; never silently fall back to a weaker parser.
+For the bundled audit, use Python 3.10+. It uses PyYAML when an already-trusted environment provides it; otherwise it uses its built-in, deliberately bounded YAML parser. Both paths reject aliases, merge keys, unsafe tags, duplicate keys, and nesting beyond 32 levels. Do not install dependencies just to run the audit.
 
 Self-Improving Agent and Skill Vetter are optional companions. Read [references/integrations.md](references/integrations.md) when consuming `.learnings/` records or reviewing an external skill. Neither companion's hooks nor its extraction script is needed by Gardener.
 

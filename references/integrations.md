@@ -49,6 +49,6 @@ Reviewed 2026-09-06: the complete published Skill Vetter v1.0.0 instructions on 
 
 The version archive/file manifest could not be retrieved in this review (the API returned HTTP 409). This is an instructions-only review, not a full package certification. The old README's claimed GitHub publisher mapping was not independently verified and is not used as an identity check. Before any installation, verify the actual owner, version, and complete package contents through the available registry tooling.
 
-## Python audit dependency
+## Python audit parser
 
-The audit pins PyYAML 6.0.3 in `requirements.txt` and subclasses its `SafeLoader`; it never uses the unsafe/default loader. Duplicate mapping keys, aliases/merge keys, and excessive nesting are rejected explicitly. Input is capped at 1 MiB per file. PyYAML is an execution dependency only of the audit, not of the generated skills. No dependency is downloaded by the audit itself.
+The audit has no runtime dependency. When an already-trusted environment supplies PyYAML, it subclasses `SafeLoader` and never uses the unsafe/default loader. Otherwise it uses its bounded stdlib parser for the documented frontmatter subset. Both paths reject duplicate mapping keys, aliases/merge keys, unsafe YAML tags, and excessive nesting. Input is capped at 1 MiB per file. No dependency is downloaded by the audit itself.
